@@ -1,16 +1,32 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <Authors>Berin Loritsch</Authors>
+    <TargetFrameworks>netstandard2.0;NET461</TargetFrameworks>
+    <Authors>D-Haven.org</Authors>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Description>DotNet implementation of NetFlix Feign (https://github.com/OpenFeign/feign).  Integrates with Microsoft DependencyInjection to generate the wrapper code from an interface representing a Rest end point.</Description>
-    <Copyright>Copyright 2017 by D-Haven.org</Copyright>
+    <Copyright>Copyright 2019 by D-Haven.org</Copyright>
+    <Company>DHaven.Faux</Company>
+    <PackageLicenseUrl>https://github.com/bloritsch/DHaven.Faux/blob/develop/LICENSE</PackageLicenseUrl>
+    <PackageProjectUrl>https://github.com/bloritsch/DHaven.Faux</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/bloritsch/DHaven.Faux</RepositoryUrl>
+    <RepositoryType>Git</RepositoryType>
+    <PackageTags>webservice client generator</PackageTags>
+    <Version>1.3.0</Version>
+    <PackageReleaseNotes>Bug fixes discovered during FauxGen integration.</PackageReleaseNotes>
+    <AssemblyVersion>1.3.0.0</AssemblyVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="2.4.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="2.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="2.0.0" />
-    <PackageReference Include="newtonsoft.json" Version="10.0.3" />
+    <PackageReference Include="Microsoft.CodeAnalysis" Version="2.10.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="2.10.0" />
+    <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="2.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="2.2.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="2.2.0" />
+    <PackageReference Include="microsoft.extensions.logging" Version="2.2.0" />
+    <PackageReference Include="microsoft.extensions.logging.configuration" Version="2.2.0" />
+    <PackageReference Include="microsoft.extensions.logging.debug" Version="2.2.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+    <PackageReference Include="Steeltoe.CircuitBreaker.HystrixCore" Version="2.1.1" />
     <PackageReference Include="steeltoe.discovery.client" Version="1.1.0" />
     <PackageReference Include="system.runtime.loader" Version="4.3.0" />
   </ItemGroup>

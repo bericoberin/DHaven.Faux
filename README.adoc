@@ -1,19 +1,21 @@
 = DHaven.Faux
 
 image:https://badges.gitter.im/DHaven-Faux/Lobby.svg[link="https://gitter.im/DHaven-Faux/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge"]
+image:https://ci.appveyor.com/api/projects/status/3g77q1gu23cbsfu3?svg=true[link="https://ci.appveyor.com/project/bloritsch/dhaven-faux"]
+image:https://img.shields.io/badge/nuget-package-blue.svg[link="https://www.nuget.org/packages/DHaven.Faux/"]
 
 NetFlix created a bunch of really useful cloud projects, all of which are Java based.
 Steeltoe OSS has made service discovery and a few other integrations available to the
-Dotnet community.  One glaring missing feature is an analog for Feign.  This library
+DotNet community.  One glaring missing feature is an analog for Feign.  This library
 intends to fill that gap.  I'm only one guy, so I appreciate any help I can get.
 
-== What will DHaven.Faux do?
+== What does DHaven.Faux do?
 
-Given an interface to a web service with all the Mvc attributes decorating the methods,
+Given an interface to a web service with all the Mvc like attributes decorating the methods,
 DHaven.Faux will generate an implementation that calls the web service for you.  It will
 even use Steeltoe.Discovery.Client to resolve the service for you.
 
-Even better, this will be integrated with Microsoft's Dependency Injection framework so
+Even better, this is integrated with Microsoft's Dependency Injection framework so
 that you only have to add your interface, and Faux will generate the implementation.
 
 The following interface:
@@ -26,16 +28,16 @@ using System.Threading.Tasks;
 
 namespace Fortune_Teller_UI.Services
 {
-    [ServiceName("fortuneService")]
+    [FauxClient("fortuneService")]
     [Route("api/fortunes")]
     public interface IFortuneService
     {
-	// GET api/fortunes
-	[HttpGet]
+        // GET api/fortunes
+        [HttpGet]
         Task<IEnumerable<Fortune>> Get();
 
-	// GET api/fortunes/random
-	[HttpGet("random")]
+        // GET api/fortunes/random
+        [HttpGet("random")]
         public Fortune Random();
     }
 }
@@ -45,7 +47,80 @@ Will have all the plumbing done for you so that you can use the service just lik
 a standard CSharp object.  (Appologies to Steeltoe, I adapted their starter example)
 
 
+== Using Faux in my Net Core Web App
+
+All you need to do is register faux in your services startup:
+
+----
+public void ConfigureServices(IServiceCollection services)
+{
+    // Add framework services.
+    services.AddFaux(Configuration);
+            
+    services.AddMvc();
+}
+----
+
+== Using Faux in my applications without dependency injection
+
+We get it, not every project actually needs dependency injection.  It's great we want to
+support it, but it's just as important to support the less complicated way of doing things.
+For that, we have the FauxCollection class.  It hides the dependency injection away from you,
+and allows you to use the services directly.
+
+NOTE: if you are running unit tests you may need to add an anchor type to let Faux search
+within the assembly it belongs to.  Anytime the entry assembly (test runners) loads your
+assembly dynamically, it's something you'll have to do.  The AddFaux() above also allows
+you to do that.
+
+----
+var collection = new FauxCollection(typeof(MyTest));
+
+var fortuneService = collection.GetInstance<IFortuneService>();
+----
+
 == What does DHaven.Faux do right now?
 
-Not much.  As of 6/22/2017 I just started the project.  Hopefully I'll remember to update
-this page...
+DHaven.Faux generates the web service implementations for you at runtime.
+Alternatively, DHaven.FauxGen is a command line tool that will generate an
+assembly for you so that you can explicitly identify them and skip the compilation
+step at initialization time.
+
+NOTE: it is important that the objects you use in your interface are objects that
+NewtonSoft.JSon knows how to serialize. 
+
+== Generated Classes
+
+If you want to enable looking at the generated source code for your implementation,
+you can control many aspects of the code in your appsettings.json file:
+
+----
+{
+  "Faux": {
+    "OutputSourceFiles": true,
+    "SourceFilePath": "./faux-generated",
+    "RootNamespace": "My.Application.Namespace",
+    "GenerateSealedClasses": true
+  }
+}
+----
+
+* OutputSourceFiles: true to write the generated classes to the file system
+* SourceFilePath: path to the directory you want the generated classes placed
+* RootNamespace: the namespace to put all generated code inside.  It defaults to "DHaven.Faux.Wrapper"
+* GenerateSealedClasses: the default is true, sealed classes cannot be inherited from.
+
+To prevent naming conflicts between your parameters and internal Faux code,
+all Faux variables are prefixed with the Kanji 仮 (kari).  Kari is word
+that means "temporary".  When it's used as a prefix it also means "fake".
+It seemed fitting to use that particular character with English to represent
+internal variables in this project.
+
+== Contributing
+
+Please add issues if there any problems, questions, or feature requests.
+
+To contribute code, link:https://www.clahub.com/agreements/bloritsch/DHaven.Faux[sign the Contributor License Agreement].
+
+We need the CLA to protect the project and to protect you from legal implications.
+Feel free to fork, make changes, and provide pull requests.

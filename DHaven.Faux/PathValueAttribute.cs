@@ -1,9 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 
 namespace DHaven.Faux
 {
+    /// <inheritdoc />
     /// <summary>
     /// Used to mark the method parameter as the value for the path
     /// variable in the HttpMethodAttribute.
@@ -16,6 +15,6 @@ namespace DHaven.Faux
             Variable = param;
         }
 
-        public string Variable { get; private set; }
+        public string Variable { get; }
     }
 }

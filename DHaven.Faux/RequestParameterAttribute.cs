@@ -2,6 +2,7 @@
 
 namespace DHaven.Faux
 {
+    /// <inheritdoc />
     /// <summary>
     /// The value of the method parameter marked with this attribute will
     /// be be applied to the specified parameter name.
@@ -9,11 +10,11 @@ namespace DHaven.Faux
     [AttributeUsage(AttributeTargets.Parameter)]
     public class RequestParameterAttribute : Attribute
     {
-        public RequestParameterAttribute(string paramName)
+        public RequestParameterAttribute(string paramName = null)
         {
             Parameter = paramName;
         }
 
-        public string Parameter { get; private set; }
+        public string Parameter { get; }
     }
 }

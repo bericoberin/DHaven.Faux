@@ -16,230 +16,94 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.Loader;
-using System.Text;
+using Microsoft.Extensions.Logging;
+using TypeInfo = System.Reflection.TypeInfo;
+
+#if NETSTANDARD
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using TypeInfo = System.Reflection.TypeInfo;
-using Steeltoe.Discovery.Client;
-using System.Threading.Tasks;
-using System.Net.Http;
-using Microsoft.Extensions.Configuration;
+#endif
 
 namespace DHaven.Faux.Compiler
 {
-    internal class WebServiceComplier
+    public partial class WebServiceCompiler
     {
-        private const string RootNamespace = "DHaven.Feign.Wrapper";
-        private readonly TypeInfo typeInfo;
-        private readonly string newClassName;
-        private static Assembly servicesAssembly;
-        private static readonly List<SyntaxTree> syntaxTrees = new List<SyntaxTree>();
+        private enum BindingType { Core, Hystrix }
+        private readonly ILogger<WebServiceCompiler> logger;
+        private readonly FauxDiscovery discovery;
+        private readonly IDictionary<BindingType,IWebServiceClassGenerator> serviceClassGenerators = new Dictionary<BindingType,IWebServiceClassGenerator>();
 
-        private static readonly ISet<string> References = new HashSet<string>();
+#if NETSTANDARD
+        private readonly List<SyntaxTree> syntaxTrees = new List<SyntaxTree>();
+#else
+        private readonly List<string> codeSources = new List<string>();
+#endif
 
-        protected WebServiceComplier(TypeInfo type)
+        public WebServiceCompiler(FauxDiscovery discovery, IEnumerable<IWebServiceClassGenerator> classGenerators, ILogger<WebServiceCompiler> logger)
         {
-            typeInfo = type;
-            newClassName = $"{RootNamespace}.{typeInfo.FullName.Replace(".", string.Empty)}";
-            UpdateReferences(GetType().GetTypeInfo().Assembly);
-            UpdateReferences(typeInfo.Assembly);
-            Define();
-        }
-
-        private void UpdateReferences(Assembly assembly)
-        {
-            string referenceLocation = assembly.Location;
-
-            if (!References.Contains(referenceLocation))
+            this.logger = logger;
+            foreach(var classGenerator in classGenerators)
             {
-                References.Add(referenceLocation);
-
-                foreach(var dependency in assembly.GetReferencedAssemblies())
-                {
-                    UpdateReferences(Assembly.Load(dependency));
-                }
+                var type = classGenerator.GetType().Name.Contains("Hystrix") ? BindingType.Hystrix : BindingType.Core;
+                serviceClassGenerators.Add(type, classGenerator);
+            }
+            this.discovery = discovery;
+            
+            foreach(var service in this.discovery.GetAllFauxInterfaces())
+            {
+                RegisterInterface(service);
             }
         }
 
-        public void Define()
+        /// <summary>
+        /// Registers a new type to be compiled.
+        /// </summary>
+        /// <param name="type">the type to register</param>
+        public void RegisterInterface(TypeInfo type)
         {
-            if (!typeInfo.IsInterface || !typeInfo.IsPublic)
+            logger.LogDebug($"Registering the interface: {type.FullName}");
+
+            var fullyQualifiedClassName = discovery.GetImplementationNameFor(type);
+            if (fullyQualifiedClassName != null)
             {
-                throw new ArgumentException($"{typeInfo.FullName} must be a public interface");
+                // already registered
+                return;
             }
 
-            if (typeInfo.IsGenericType)
+            var binding = type.GetCustomAttribute<HystrixFauxClientAttribute>() == null ? BindingType.Core : BindingType.Hystrix;
+            var sourceCodeList = serviceClassGenerators[binding].GenerateSource(type, out fullyQualifiedClassName);
+            discovery.RegisterType(type, fullyQualifiedClassName);
+
+            foreach (var sourceCode in sourceCodeList)
             {
-                throw new NotSupportedException($"Generic interfaces are not supported: {typeInfo.FullName}");
+#if NETSTANDARD
+                syntaxTrees.Add(SyntaxFactory.ParseSyntaxTree(sourceCode));
+#else
+                codeSources.Add(sourceCode);
+#endif
             }
 
-            var className = typeInfo.FullName.Replace(".", string.Empty);
-            var serviceName = typeInfo.GetCustomAttribute<FauxClientAttribute>().Name;
-            var baseRoute = typeInfo.GetCustomAttribute<RouteAttribute>().BaseRoute;
-
-            var classBuilder = new StringBuilder();
-            classBuilder.AppendLine($"namespace {RootNamespace}");
-            classBuilder.AppendLine("{");
-            classBuilder.AppendLine($"    public class {className} : DHaven.Faux.Compiler.DiscoveryAwareBase, {typeInfo.FullName}");
-            classBuilder.AppendLine("    {");
-            classBuilder.AppendLine($"        public {className}()");
-            classBuilder.AppendLine($"            : base(\"{serviceName}\", \"{baseRoute}\") {{ }}");
-
-            foreach(var method in typeInfo.GetMethods())
-            {
-                BuildMethod(classBuilder, method);
-            }
-
-            classBuilder.AppendLine("    }");
-            classBuilder.AppendLine("}");
-
-            syntaxTrees.Add(SyntaxFactory.ParseSyntaxTree(classBuilder.ToString()));
+            logger.LogDebug($"Finished compiling the syntax tree for {fullyQualifiedClassName} generated from {type.FullName}");
         }
 
-        public object Generate()
+        public Assembly Compile(string assemblyName)
         {
-            if (servicesAssembly == null)
-            {
-                Compile();
-                Debug.Assert(servicesAssembly != null);
-            }
+#if NETSTANDARD
+            var somethingToCompile = syntaxTrees.Any();
+#else
+            var somethingToCompile = codeSources.Any();
+#endif
 
-            var type = servicesAssembly.GetType(newClassName);
-            var constructor = type.GetConstructor(new Type[0]);
-            return constructor.Invoke(new object[0]);
+            // Always return something, the entry assembly will be able to load implementations since the assembly
+            // is a dependency.  The platform compiled assembly will load what was generated at runtime.
+            return somethingToCompile ? PlatformCompile(assemblyName) : Assembly.GetEntryAssembly();
         }
 
-        private void BuildMethod(StringBuilder classBuilder, MethodInfo method)
+        public string GetImplementationName(TypeInfo type)
         {
-            bool isAsyncCall = typeof(Task).IsAssignableFrom(method.ReturnType);
-            Type returnType = method.ReturnType;
-
-            if(isAsyncCall && method.ReturnType.IsConstructedGenericType)
-            {
-                returnType = method.ReturnType.GetGenericArguments()[0];
-            }
-
-            bool isVoid = returnType == typeof(void);
-
-            // Write the method declaration
-
-            classBuilder.Append("        public ");
-            if (isAsyncCall)
-            {
-                classBuilder.Append("async ");
-                classBuilder.Append(typeof(Task).FullName);
-
-                if(!isVoid)
-                {
-                    classBuilder.Append($"<{ToCompilableName(returnType)}>");
-                }
-            }
-            else
-            {
-                classBuilder.Append(isVoid ? "void" : ToCompilableName(returnType));
-            }
-
-            HttpMethodAttribute attribute = method.GetCustomAttribute<HttpMethodAttribute>();
-
-            classBuilder.Append($" {method.Name}(");
-            classBuilder.Append(string.Join(", ", method.GetParameters().Select(p => $"{ToCompilableName(p.ParameterType)} {p.Name}")));
-            classBuilder.AppendLine(")");
-            classBuilder.AppendLine("        {");
-            classBuilder.AppendLine("            var variables = new System.Collections.Generic.Dictionary<string,object>();");
-
-            foreach(var parameter in method.GetParameters())
-            {
-                var pathValue = parameter.GetCustomAttribute<PathValueAttribute>();
-
-                if (pathValue != null)
-                {
-                    var key = string.IsNullOrEmpty(pathValue.Variable) ? parameter.Name : pathValue.Variable;
-                    classBuilder.AppendLine($"            variables.Add(\"{key}\", {parameter.Name});");
-                }
-            }
-
-            classBuilder.AppendLine($"            var request = CreateRequest({ToCompilableName(attribute.Method)}, \"{attribute.Path}\", variables);");
-
-            if (isAsyncCall)
-            {
-                classBuilder.AppendLine("            var response = await InvokeAsync(request);");
-            }
-            else
-            {
-                classBuilder.AppendLine("            var response = Invoke(request);");
-            }
-
-            if (!isVoid)
-            {
-                if(isAsyncCall)
-                {
-                    classBuilder.AppendLine($"            return await ConvertToObjectAsync<{ToCompilableName(method.ReturnType)}>(response);");
-                }
-                else
-                {
-                    classBuilder.AppendLine($"            return ConvertToObject<{ToCompilableName(method.ReturnType)}>(response);");
-                }
-            }
-
-            classBuilder.AppendLine("        }");
-        }
-
-        private static string ToCompilableName(HttpMethod method)
-        {
-            string value = method.Method.First() + method.Method.Substring(1).ToLower();
-            return $"System.Net.Http.HttpMethod.{value}";
-        }
-
-        private static string ToCompilableName(Type type)
-        {
-            string baseName = type.FullName;
-
-            if (type.IsConstructedGenericType)
-            {
-                baseName = baseName.Substring(0, baseName.IndexOf('`'));
-                return $"{baseName}<{string.Join(",", type.GetGenericArguments().Select(ToCompilableName))}>";
-            }
-
-            return baseName;
-        }
-
-        private static void Compile()
-        {
-            var assemblyName = Path.GetRandomFileName();
-
-            var compilation = CSharpCompilation.Create(assemblyName)
-                .WithOptions(new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary))
-                .AddReferences(References.Select(location => MetadataReference.CreateFromFile(location)))
-                .AddSyntaxTrees(syntaxTrees);
-
-            using (var stream = new MemoryStream())
-            {
-                var result = compilation.Emit(stream);
-
-                if (result.Success)
-                {
-                    stream.Seek(0, SeekOrigin.Begin);
-                    servicesAssembly = AssemblyLoadContext.Default.LoadFromStream(stream);
-                    return;
-                }
-
-                var failures = result.Diagnostics.Where(diagnostic =>
-                    diagnostic.IsWarningAsError ||
-                    diagnostic.Severity == DiagnosticSeverity.Error);
-
-                var errorList = new StringBuilder();
-                foreach (var diagnostic in failures)
-                {
-                    errorList.AppendLine($"{diagnostic.Id}: {diagnostic.GetMessage()}");
-                }
-
-                throw new CompilationException(errorList.ToString());
-            }
+            return discovery.GetImplementationNameFor(type);
         }
     }
 
@@ -247,16 +111,5 @@ namespace DHaven.Faux.Compiler
     {
         public CompilationException(string message) : base(message)
         {}
-    }
-
-    internal class WebServiceCompiler<TService> : WebServiceComplier
-        where TService : class
-    {
-        public WebServiceCompiler() : base(typeof(TService).GetTypeInfo()) { }
-
-        public new TService Generate()
-        {
-            return base.Generate() as TService;
-        }
     }
 }
